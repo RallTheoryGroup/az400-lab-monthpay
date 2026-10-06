@@ -1,0 +1,98 @@
+name: MonthPay Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  security-events: write
+  contents: read
+
+env:
+  PROJECT_PATH: RallTheoryGroup/src/financial-services/monthpay/src/MonthPay
+
+jobs:
+  dependency-scan:
+    name: Dependency Scan (SCA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Audit and restore packages
+        run: >-
+          dotnet restore -p:NuGetAudit=true -p:NuGetAuditMode=all
+          -p:NuGetAuditLevel=high
+          -p:WarningsAsErrors=NU1900%3BNU1903%3BNU1904%3BNU1801
+        working-directory: ${{ env.PROJECT_PATH }}
+
+      - name: Check for vulnerable packages
+        if: always()
+        run: dotnet list package --vulnerable --include-transitive --format json > dependencies.json
+        working-directory: ${{ env.PROJECT_PATH }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monthpay-dependencies
+          path: ${{ env.PROJECT_PATH }}/dependencies.json
+          if-no-files-found: error
+          retention-days: 30
+
+  container-scan:
+    name: Container Image Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t monthpay:${{ github.sha }} .
+        working-directory: ${{ env.PROJECT_PATH }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.71.1
+          scanners: vuln
+          limit-severities-for-sarif: true
+          image-ref: monthpay:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      - name: Upload Trivy SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: 'trivy-container'
+
+      - name: Upload scan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-report
+          path: trivy-results.sarif
+          retention-days: 30
+
+  quality-gate:
+    name: Security Quality Gate
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, container-scan]
+    if: always()
+    steps:
+      - name: Evaluate results
+        run: |
+          if [ "${{ needs.dependency-scan.result }}" != "success" ] || \
+             [ "${{ needs.container-scan.result }}" != "success" ]; then
+            echo "::error::Security quality gate FAILED"
+            echo "One or more security scans detected critical/high findings."
+            echo "Review the scan reports in the Security tab and fix before merging."
+            exit 1
+          fi
+          echo "All security scans passed - quality gate OK"
