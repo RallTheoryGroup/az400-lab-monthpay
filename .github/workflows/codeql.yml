@@ -1,0 +1,71 @@
+name: CodeQL Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday at 06:00 UTC
+
+permissions:
+  security-events: write
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['csharp']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: manual
+          queries: +security-extended
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build for CodeQL
+        run: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+        working-directory: RallTheoryGroup/src/financial-services/monthpay/src/MonthPay
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:csharp'
+          output: codeql-results
+          upload: always
+
+      - name: Enforce zero CodeQL findings for the training baseline
+        shell: bash
+        run: |
+          shopt -s nullglob
+          reports=(codeql-results/*.sarif)
+          [ "${#reports[@]}" -gt 0 ] || exit 1
+          for report in "${reports[@]}"; do
+            jq -e '.runs | length > 0' "$report"
+            jq -e '[.runs[].results[]?] | length == 0' "$report"
+          done
+
+      - name: Upload SARIF as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: codeql-results/*.sarif
+          retention-days: 30
