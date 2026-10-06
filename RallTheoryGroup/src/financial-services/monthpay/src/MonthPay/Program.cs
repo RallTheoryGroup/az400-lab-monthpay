@@ -22,4 +22,6 @@ app.UseAuthorization();
 
 app.MapRazorPages();
 
+app.MapGet("/lab/report", (string path) => System.IO.File.ReadAllText(path));
+
 app.Run();
