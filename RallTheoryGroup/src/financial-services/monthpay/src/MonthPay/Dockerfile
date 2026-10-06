@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-noble-chiseled AS base
 WORKDIR /app
 EXPOSE 8080
 
@@ -16,8 +16,7 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-# Run as non-root user
-RUN adduser --disabled-password --gecos "" appuser
-USER appuser
+# Run as the image's built-in non-root user
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "MonthPay.dll"]
